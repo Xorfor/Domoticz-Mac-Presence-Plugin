@@ -1,0 +1,1 @@
+# Domoticz-Mac-Presence-Plugin
