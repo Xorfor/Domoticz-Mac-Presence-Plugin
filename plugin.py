@@ -5,7 +5,7 @@
 # MAC addresses in de format xx:xx:xx:xx:xx:xx,xx:xx:xx:xx:xx:xx,xx:xx:xx:xx:xx:xx
 
 """
-<plugin key="xrf_macpresence" name="MAC address presence" author="Xorfor" version="2.0.0" externallink="https://github.com/Xorfor/Domoticz/tree/master/plugins/macpresence">
+<plugin key="xrf_macpresence" name="MAC address presence" author="Xorfor" version="2.0.0" externallink="https://github.com/Xorfor/Domoticz-Mac-Presence-Plugin">
     <params>
         <param field="Address" label="MAC addresses" width="1000px" required="true"/>
         <param field="Mode1" label="Minutes between check" width="100px" required="true" default="1"/>
