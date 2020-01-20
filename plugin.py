@@ -22,6 +22,7 @@
 import Domoticz
 import platform
 import os
+import subprocess
 
 
 class BasePlugin:
@@ -31,7 +32,8 @@ class BasePlugin:
 
     def __init__(self):
         self.__platform = platform.system()
-        self.__addresses = {}
+        self.__mac_addresses = {}
+        self.__ip_addresses = {}
         self.__timeouts = {}
         self.__heartbeat = 1
         self.__timeout = 1
@@ -42,14 +44,14 @@ class BasePlugin:
         return
 
     def onStart(self):
-        Domoticz.Debug("onStart called")
         # Debug
         if Parameters["Mode6"] == "Debug":
             Domoticz.Debugging(1)
         else:
             Domoticz.Debugging(0)
+        Domoticz.Debug("onStart")
         # Validate parameters
-        Domoticz.Debug("Platform: "+self.__platform)
+        Domoticz.Debug("Platform: " + self.__platform)
         if self.__platform == "Linux":
             self.__COMMAND = "arp-scan"
             self.__OPTIONS = "-lq"
@@ -80,101 +82,171 @@ class BasePlugin:
         macList = Parameters["Address"].split(",")
         numDevices = 0
         for macItem in macList:
-            numDevices += 1
-            self.__addresses[numDevices] = macItem.lower().strip().replace("-", ":")
+            self.__mac_addresses[numDevices] = macItem.lower().strip().replace("-", ":")
+            self.__ip_addresses[numDevices] = None
             self.__timeouts[numDevices] = self.__timeout
-        Domoticz.Debug("Number of mac items: "+str(numDevices))
+            numDevices += 1
+        Domoticz.Debug("Number of mac items: " + str(numDevices))
         if self.__UNIT not in Devices:
-            Domoticz.Device(Unit=self.__UNIT, Name="MAC Presence", TypeName="Switch", Image=18, Used=1).Create()
+            Domoticz.Device(
+                Unit=self.__UNIT,
+                Name="MAC Presence",
+                TypeName="Switch",
+                Image=18,
+                Used=1,
+            ).Create()
         DumpConfigToLog()
 
     def onStop(self):
-        Domoticz.Debug("onStop called")
+        Domoticz.Debug("onStop")
 
     def onConnect(self, Connection, Status, Description):
-        Domoticz.Debug("onConnect called")
+        Domoticz.Debug("onConnect: {} / {}".format(Connection.name, Status))
 
     def onMessage(self, Connection, Data):
-        Domoticz.Debug("onMessage called")
+        Domoticz.Debug("onMessage: {}".format(Connection.name))
 
     def onCommand(self, Unit, Command, Level, Hue):
-        Domoticz.Debug("onCommand called for Unit " + str(Unit) + ": Parameter '" + str(Command) + "', Level: " + str(Level))
+        Domoticz.Debug("onCommand: {} / {} / {} / {}".format(Unit, Command, Level, Hue))
+        if Command == "On":
+            UpdateDevice(self.__UNIT, 1, "On")
+        else:
+            UpdateDevice(self.__UNIT, 0, "Off")
 
     def onNotification(self, Name, Subject, Text, Status, Priority, Sound, ImageFile):
-        Domoticz.Debug("Notification: " + Name + "," + Subject + "," + Text + "," + Status + "," + str(Priority) + "," + Sound + "," + ImageFile)
+        Domoticz.Debug(
+            "onNotification: {} / {} / {} / {} / {} / {} / {}".format(
+                Name, Subject, Text, Status, Priority, Sound, ImageFile
+            )
+        )
 
     def onDisconnect(self, Connection):
-        Domoticz.Debug("onDisconnect called")
+        Domoticz.Debug("onDisconnect: {}".format(Connection.name))
 
     def onHeartbeat(self):
-        Domoticz.Debug("onHeartbeat called")
+        Domoticz.Debug("onHeartbeat")
         if not self.__config_ok:
             return
         self.__runAgain -= 1
         if self.__runAgain <= 0:
-            found = False
+            devices_found = False
+            #
+            # Ping already detected ip addresses
+            for i in range(len(self.__mac_addresses)):
+                Domoticz.Debug("Ping: {}".format(self.__mac_addresses[i]))
+                if not (self.__ip_addresses[i] is None):
+                    Domoticz.Debug("Ping {}".format(self.__ip_addresses[i]))
+                    os.popen("ping -c3 {}".format(self.__ip_addresses[i]))
+            #
+            ret_arp_scan = list(
+                os.popen("{} {}".format(self.__COMMAND, self.__OPTIONS))
+            )
+            ret_arp = list(os.popen("{} {}".format("arp", "")))
             # Scan for mac addresses in the network
-            ret = os.popen(self.__COMMAND + " " + self.__OPTIONS).read().lower()
-            for i in range(len(self.__addresses)):
-                num = i + 1
-                Domoticz.Debug("num    : " + str(num))
-                Domoticz.Debug("address: '" + self.__addresses[num] + "'")
-                pos = ret.find(self.__addresses[num])
-                Domoticz.Debug("pos: "+str(pos))
-                if pos >= 0:
-                    Domoticz.Debug("address: " + self.__addresses[num] + " found. Timeout: " + str(self.__timeout))
-                    found = True
-                    self.__timeouts[num] = self.__timeout
+            for i in range(len(self.__mac_addresses)):
+                Domoticz.Debug("Searching: {}".format(self.__mac_addresses[i]))
+                device_found = False
+                #
+                Domoticz.Debug("arp-scan")
+                for line in ret_arp_scan:
+                    line = line.strip().lower()
+                    if len(line) > 0:
+                        splitted_line = line.split()
+                        if self.__mac_addresses[i] == splitted_line[1]:
+                            Domoticz.Debug(
+                                "{} found with {}".format(
+                                    self.__mac_addresses[i], splitted_line[0]
+                                )
+                            )
+                            device_found = True
+                            self.__timeouts[i] = self.__timeout
+                            self.__ip_addresses[i] = splitted_line[0]
+                            break
+                #
+                Domoticz.Debug("arp")
+                for line in ret_arp:
+                    if len(line) > 0:
+                        splitted_line = line.split()
+                        if self.__mac_addresses[i] == splitted_line[2]:
+                            Domoticz.Debug(
+                                "{} found with {}".format(
+                                    self.__mac_addresses[i], splitted_line[0]
+                                )
+                            )
+                            device_found = True
+                            self.__timeouts[i] = self.__timeout
+                            self.__ip_addresses[i] = splitted_line[0]
+                            break
+                #
+                # Device not found
+                if not device_found:
+                    Domoticz.Debug("{} not found".format(self.__mac_addresses[i]))
+                    self.__timeouts[i] -= 1
+                    if self.__timeouts[i] > 0:
+                        Domoticz.Debug(
+                            "{} timeout ({})".format(
+                                self.__mac_addresses[i], self.__timeouts[i]
+                            )
+                        )
+                        devices_found = True
                 else:
-                    # Device not found
-                    self.__timeouts[num] -= 1
-                    if self.__timeouts[num] > 0:
-                        # Device not timed out yet
-                        Domoticz.Debug("address: " + self.__addresses[num] + " not timed out yet: "+str(self.__timeouts[num]))
-                        found = True
-            if found:
-                Domoticz.Debug("An address found or not timed out yet")
+                    devices_found = True
+                    Domoticz.Debug("{} found".format(self.__mac_addresses[i]))
+            #
+            # All mac addresses check. Check if one or more devices are found
+            if devices_found:
+                Domoticz.Debug("One or more devices still on network")
                 UpdateDevice(self.__UNIT, 1, "On")
             else:
-                Domoticz.Debug("No addresses found")
+                Domoticz.Debug("No devices found!!!")
                 UpdateDevice(self.__UNIT, 0, "Off")
+            #
+            self.__runAgain = self.__MINUTE * self.__heartbeat
 
-            self.__runAgain = self.__MINUTE*self.__heartbeat
 
 global _plugin
 _plugin = BasePlugin()
+
 
 def onStart():
     global _plugin
     _plugin.onStart()
 
+
 def onStop():
     global _plugin
     _plugin.onStop()
+
 
 def onConnect(Connection, Status, Description):
     global _plugin
     _plugin.onConnect(Connection, Status, Description)
 
+
 def onMessage(Connection, Data):
     global _plugin
     _plugin.onMessage(Connection, Data)
+
 
 def onCommand(Unit, Command, Level, Hue):
     global _plugin
     _plugin.onCommand(Unit, Command, Level, Hue)
 
+
 def onNotification(Name, Subject, Text, Status, Priority, Sound, ImageFile):
     global _plugin
     _plugin.onNotification(Name, Subject, Text, Status, Priority, Sound, ImageFile)
+
 
 def onDisconnect(Connection):
     global _plugin
     _plugin.onDisconnect(Connection)
 
+
 def onHeartbeat():
     global _plugin
     _plugin.onHeartbeat()
+
 
 ################################################################################
 # Generic helper functions
@@ -194,9 +266,24 @@ def DumpConfigToLog():
     for x in Settings:
         Domoticz.Debug("Setting:           " + str(x) + " - " + str(Settings[x]))
 
+
 def UpdateDevice(Unit, nValue, sValue, TimedOut=0, AlwaysUpdate=False):
     # Make sure that the Domoticz device still exists (they can be deleted) before updating it
     if Unit in Devices:
-        if Devices[Unit].nValue != nValue or Devices[Unit].sValue != sValue or Devices[Unit].TimedOut != TimedOut or AlwaysUpdate:
+        if (
+            Devices[Unit].nValue != nValue
+            or Devices[Unit].sValue != sValue
+            or Devices[Unit].TimedOut != TimedOut
+            or AlwaysUpdate
+        ):
             Devices[Unit].Update(nValue=nValue, sValue=str(sValue), TimedOut=TimedOut)
-            Domoticz.Debug("Update " + Devices[Unit].Name + ": " + str(nValue) + " - '" + str(sValue) + "'")
+            Domoticz.Debug(
+                "Update "
+                + Devices[Unit].Name
+                + ": "
+                + str(nValue)
+                + " - '"
+                + str(sValue)
+                + "'"
+            )
+
