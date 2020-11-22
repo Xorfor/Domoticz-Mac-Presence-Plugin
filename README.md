@@ -1,3 +1,12 @@
+# NOT MAINTAINED ANYMORE!!!
+I am disappointed in the way Domoticz developes: 
+* 1 stable version per year, I had to wait 4 months until a bug was fixed
+* no reaction on reported bugs, also if you give a direction for solution
+* lost data after upgrade to a new stable versions
+* etc.
+
+So I moved to Home Assistant, and have no time/environment to maintain this plugin
+
 # Mac address presence
 This Domoticz Python Plugin scan the Domoticz network for the existance of the specified mac addresses.
 ## Prerequisites
